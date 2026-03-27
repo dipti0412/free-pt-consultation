@@ -10,7 +10,6 @@ protocol WearableDataProvider {
 struct WearableStats {
     let activeCaloriesLastWeek: Int
     let workoutsLast7Days: [WorkoutSummary]
-    let refreshedAt: Date
 }
 
 struct WorkoutSummary: Identifiable {
@@ -59,8 +58,8 @@ private struct HealthKitClient {
 
         try await requestAuthorization()
 
-        let endDate = Calendar.current.startOfDay(for: now)
-        guard let startDate = Calendar.current.date(byAdding: .day, value: -6, to: endDate) else {
+        let endDate = now
+        guard let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate) else {
             throw NSError(
                 domain: "BestPT.HealthKit",
                 code: -2,
@@ -80,7 +79,12 @@ private struct HealthKitClient {
         var workoutSummaries: [WorkoutSummary] = []
         for workout in weeklyWorkouts.sorted(by: { $0.startDate > $1.startDate }) {
             let workoutCalories = Int((workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) ?? 0).rounded())
-            let averageHeartRate = try await fetchAverageHeartRate(for: workout).map { Int($0.rounded()) }
+            let averageHeartRate: Int?
+            do {
+                averageHeartRate = try await fetchAverageHeartRate(for: workout).map { Int($0.rounded()) }
+            } catch {
+                averageHeartRate = nil
+            }
             workoutSummaries.append(
                 WorkoutSummary(
                     id: workout.uuid,
@@ -93,8 +97,7 @@ private struct HealthKitClient {
 
         return WearableStats(
             activeCaloriesLastWeek: Int(calories.rounded()),
-            workoutsLast7Days: workoutSummaries,
-            refreshedAt: .now
+            workoutsLast7Days: workoutSummaries
         )
     }
 
@@ -291,22 +294,26 @@ struct ContentView: View {
     private var youTab: some View {
         NavigationStack {
             List {
-                Section("Connected source") {
-                    Text(viewModel.selectedProvider.rawValue)
+                Section("Your latest stats") {
+                    Text("Source: \(viewModel.selectedProvider.rawValue)")
+                        .foregroundStyle(.secondary)
+
                     if viewModel.isRefreshing {
                         ProgressView("Refreshing Apple Health data…")
                     }
+
                     if let errorMessage = viewModel.errorMessage {
                         Text(errorMessage)
                             .foregroundStyle(.red)
                     }
-                }
 
-                Section("Your latest stats") {
                     if let stats = viewModel.stats {
                         statRow(title: "Active Energy (last 7 days)", value: "\(stats.activeCaloriesLastWeek) kcal")
+                    } else if viewModel.isRefreshing {
+                        Text("Fetching Active Energy from Apple Health…")
+                            .foregroundStyle(.secondary)
                     } else {
-                        Text("No Apple Health stats yet. Pull to refresh.")
+                        Text("No Apple Health stats yet. Tap refresh to request Apple Health access.")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -325,18 +332,12 @@ struct ContentView: View {
                     } else if viewModel.stats != nil {
                         Text("No workouts recorded in the last 7 days.")
                             .foregroundStyle(.secondary)
-                    } else {
-                        Text("No Apple Health stats yet. Pull to refresh.")
+                    } else if viewModel.isRefreshing {
+                        Text("Fetching workouts from Apple Health…")
                             .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section {
-                    if let stats = viewModel.stats {
-                        statRow(
-                            title: "Last sync",
-                            value: stats.refreshedAt.formatted(date: .abbreviated, time: .shortened)
-                        )
+                    } else {
+                        Text("No workout stats yet. Tap refresh to request Apple Health access.")
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
