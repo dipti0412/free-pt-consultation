@@ -1,0 +1,23 @@
+[project]
+name = "pt-data-pipeline"
+version = "0.1.0"
+description = "Data ingestion and research extraction pipeline for personalized training plans"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.8",
+  "pandas>=2.2",
+  "pypdf>=4.3"
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
