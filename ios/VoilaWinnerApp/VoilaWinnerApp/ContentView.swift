@@ -9,12 +9,15 @@ protocol WearableDataProvider {
 
 struct WearableStats {
     let activeCaloriesLastWeek: Int
-    let averageWeeklyStepCount: Int
-    let upperBodySessions: Int
-    let lowerBodySessions: Int
-    let absSessions: Int
-    let cardioSessions: Int
+    let workoutsLast7Days: [WorkoutSummary]
     let refreshedAt: Date
+}
+
+struct WorkoutSummary: Identifiable {
+    let id: UUID
+    let date: Date
+    let burnedCalories: Int
+    let averageHeartRate: Int?
 }
 
 enum WearableProviderKind: String, CaseIterable, Identifiable {
@@ -71,69 +74,34 @@ private struct HealthKitClient {
             startDate: startDate,
             endDate: endDate
         )
-        async let totalSteps = sumQuantity(
-            type: .stepCount,
-            unit: .count(),
-            startDate: startDate,
-            endDate: endDate
-        )
         async let workouts = fetchWorkouts(startDate: startDate, endDate: endDate)
 
-        let (calories, steps, weeklyWorkouts) = try await (totalActiveCalories, totalSteps, workouts)
-
-        let upperBodyTypes: Set<HKWorkoutActivityType> = [
-            .traditionalStrengthTraining,
-            .functionalStrengthTraining,
-            .crossTraining,
-            .boxing,
-            .wrestling
-        ]
-        let lowerBodyTypes: Set<HKWorkoutActivityType> = [
-            .running,
-            .walking,
-            .hiking,
-            .stairClimbing,
-            .kickboxing,
-            .barre,
-            .elliptical,
-            .cycling
-        ]
-        let absTypes: Set<HKWorkoutActivityType> = [
-            .coreTraining,
-            .pilates,
-            .yoga
-        ]
-        let cardioTypes: Set<HKWorkoutActivityType> = [
-            .running,
-            .walking,
-            .cycling,
-            .swimming,
-            .highIntensityIntervalTraining,
-            .elliptical,
-            .rowing,
-            .stairClimbing
-        ]
-
-        let upperBodyCount = weeklyWorkouts.count { upperBodyTypes.contains($0.workoutActivityType) }
-        let lowerBodyCount = weeklyWorkouts.count { lowerBodyTypes.contains($0.workoutActivityType) }
-        let absCount = weeklyWorkouts.count { absTypes.contains($0.workoutActivityType) }
-        let cardioCount = weeklyWorkouts.count { cardioTypes.contains($0.workoutActivityType) }
+        let (calories, weeklyWorkouts) = try await (totalActiveCalories, workouts)
+        var workoutSummaries: [WorkoutSummary] = []
+        for workout in weeklyWorkouts.sorted(by: { $0.startDate > $1.startDate }) {
+            let workoutCalories = Int((workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) ?? 0).rounded())
+            let averageHeartRate = try await fetchAverageHeartRate(for: workout).map { Int($0.rounded()) }
+            workoutSummaries.append(
+                WorkoutSummary(
+                    id: workout.uuid,
+                    date: workout.startDate,
+                    burnedCalories: workoutCalories,
+                    averageHeartRate: averageHeartRate
+                )
+            )
+        }
 
         return WearableStats(
             activeCaloriesLastWeek: Int(calories.rounded()),
-            averageWeeklyStepCount: Int((steps / 7.0).rounded()),
-            upperBodySessions: upperBodyCount,
-            lowerBodySessions: lowerBodyCount,
-            absSessions: absCount,
-            cardioSessions: cardioCount,
+            workoutsLast7Days: workoutSummaries,
             refreshedAt: .now
         )
     }
 
     private func requestAuthorization() async throws {
         guard
-            let stepCountType = HKObjectType.quantityType(forIdentifier: .stepCount),
             let activeEnergyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
+            let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate),
             let workoutType = HKObjectType.workoutType() as HKSampleType?
         else {
             throw NSError(
@@ -143,7 +111,7 @@ private struct HealthKitClient {
             )
         }
 
-        let readTypes: Set<HKObjectType> = [stepCountType, activeEnergyType, workoutType]
+        let readTypes: Set<HKObjectType> = [activeEnergyType, heartRateType, workoutType]
         try await withCheckedThrowingContinuation { continuation in
             store.requestAuthorization(toShare: [], read: readTypes) { success, error in
                 if let error {
@@ -229,6 +197,32 @@ private struct HealthKitClient {
             store.execute(query)
         }
     }
+
+    private func fetchAverageHeartRate(for workout: HKWorkout) async throws -> Double? {
+        guard let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate) else {
+            return nil
+        }
+
+        let predicate = HKQuery.predicateForObjects(from: workout)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsQuery(
+                quantityType: heartRateType,
+                quantitySamplePredicate: predicate,
+                options: .discreteAverage
+            ) { _, statistics, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+                let avgValue = statistics?.averageQuantity()?.doubleValue(for: bpmUnit)
+                continuation.resume(returning: avgValue)
+            }
+            store.execute(query)
+        }
+    }
 }
 
 struct PlaceholderWearableProvider: WearableDataProvider {
@@ -310,19 +304,39 @@ struct ContentView: View {
 
                 Section("Your latest stats") {
                     if let stats = viewModel.stats {
-                        statRow(title: "Active calories (last 7 days)", value: "\(stats.activeCaloriesLastWeek)")
-                        statRow(title: "Average daily steps (last 7 days)", value: "\(stats.averageWeeklyStepCount)")
-                        statRow(title: "Upper body sessions", value: "\(stats.upperBodySessions)")
-                        statRow(title: "Lower body sessions", value: "\(stats.lowerBodySessions)")
-                        statRow(title: "Abs sessions", value: "\(stats.absSessions)")
-                        statRow(title: "Cardio sessions", value: "\(stats.cardioSessions)")
+                        statRow(title: "Active Energy (last 7 days)", value: "\(stats.activeCaloriesLastWeek) kcal")
+                    } else {
+                        Text("No Apple Health stats yet. Pull to refresh.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Workouts in last 7 days") {
+                    if let stats = viewModel.stats, !stats.workoutsLast7Days.isEmpty {
+                        ForEach(stats.workoutsLast7Days) { workout in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(workout.date.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.headline)
+                                Text("Burned Calories: \(workout.burnedCalories) kcal")
+                                Text("Average Heart Rate: \(workout.averageHeartRate.map { "\($0) bpm" } ?? "N/A")")
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    } else if viewModel.stats != nil {
+                        Text("No workouts recorded in the last 7 days.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No Apple Health stats yet. Pull to refresh.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section {
+                    if let stats = viewModel.stats {
                         statRow(
                             title: "Last sync",
                             value: stats.refreshedAt.formatted(date: .abbreviated, time: .shortened)
                         )
-                    } else {
-                        Text("No Apple Health stats yet. Pull to refresh.")
-                            .foregroundStyle(.secondary)
                     }
                 }
             }
