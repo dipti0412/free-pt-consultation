@@ -1,5 +1,6 @@
-import SwiftUI
 import Foundation
+import HealthKit
+import SwiftUI
 
 protocol WearableDataProvider {
     var sourceName: String { get }
@@ -17,121 +18,110 @@ struct WearableStats {
 }
 
 enum WearableProviderKind: String, CaseIterable, Identifiable {
-    case garminConnect = "Garmin Connect"
+    case appleHealth = "Apple Health"
     case whoop = "Whoop"
-    case appleWatch = "Apple Watch"
 
     var id: String { rawValue }
 
     var provider: WearableDataProvider {
         switch self {
-        case .garminConnect:
-            return GarminConnectProvider()
+        case .appleHealth:
+            return AppleHealthProvider()
         case .whoop:
-            return PlaceholderWearableProvider(sourceName: rawValue)
-        case .appleWatch:
             return PlaceholderWearableProvider(sourceName: rawValue)
         }
     }
 }
 
-struct GarminConnectProvider: WearableDataProvider {
-    let sourceName = WearableProviderKind.garminConnect.rawValue
+struct AppleHealthProvider: WearableDataProvider {
+    let sourceName = WearableProviderKind.appleHealth.rawValue
 
     func refreshStats() async throws -> WearableStats {
-        let config = try GarminAPIConfig.fromBundle()
-        let client = GarminHealthAPIClient(config: config)
+        let client = HealthKitClient()
         return try await client.fetchWeeklyStats()
     }
 }
 
-struct GarminAPIConfig {
-    let accessToken: String
-    let baseURL: URL
-
-    static func fromBundle(bundle: Bundle = .main) throws -> GarminAPIConfig {
-        let baseURLString = bundle.object(forInfoDictionaryKey: "GARMIN_API_BASE_URL") as? String
-            ?? "https://apis.garmin.com/wellness-api/rest"
-        let token = bundle.object(forInfoDictionaryKey: "GARMIN_ACCESS_TOKEN") as? String
-            ?? ProcessInfo.processInfo.environment["GARMIN_ACCESS_TOKEN"]
-            ?? ""
-
-        guard !token.isEmpty else {
-            throw NSError(
-                domain: "BestPT.Garmin",
-                code: -2,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "Garmin token missing. Add GARMIN_ACCESS_TOKEN to Info.plist (or env var for previews)."
-                ]
-            )
-        }
-
-        guard let baseURL = URL(string: baseURLString) else {
-            throw NSError(
-                domain: "BestPT.Garmin",
-                code: -3,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid GARMIN_API_BASE_URL in Info.plist."]
-            )
-        }
-
-        return GarminAPIConfig(accessToken: token, baseURL: baseURL)
-    }
-}
-
-private struct GarminDailySummary: Decodable {
-    let calendarDate: String?
-    let activeKilocalories: Int?
-    let steps: Int?
-}
-
-private struct GarminActivity: Decodable {
-    let activityType: String?
-}
-
-private struct GarminDailySummaryEnvelope: Decodable {
-    let dailies: [GarminDailySummary]?
-}
-
-private struct GarminActivitiesEnvelope: Decodable {
-    let activities: [GarminActivity]?
-}
-
-struct GarminHealthAPIClient {
-    let config: GarminAPIConfig
-    var session: URLSession = .shared
+private struct HealthKitClient {
+    private let store = HKHealthStore()
 
     func fetchWeeklyStats(now: Date = .now) async throws -> WearableStats {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            throw NSError(
+                domain: "BestPT.HealthKit",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Health data is not available on this device."]
+            )
+        }
+
+        try await requestAuthorization()
+
         let endDate = Calendar.current.startOfDay(for: now)
         guard let startDate = Calendar.current.date(byAdding: .day, value: -6, to: endDate) else {
             throw NSError(
-                domain: "BestPT.Garmin",
-                code: -4,
+                domain: "BestPT.HealthKit",
+                code: -2,
                 userInfo: [NSLocalizedDescriptionKey: "Could not compute last-week date range."]
             )
         }
 
-        async let dailySummaries = fetchDailySummaries(startDate: startDate, endDate: endDate)
-        async let activities = fetchActivities(startDate: startDate, endDate: endDate)
+        async let totalActiveCalories = sumQuantity(
+            type: .activeEnergyBurned,
+            unit: .kilocalorie(),
+            startDate: startDate,
+            endDate: endDate
+        )
+        async let totalSteps = sumQuantity(
+            type: .stepCount,
+            unit: .count(),
+            startDate: startDate,
+            endDate: endDate
+        )
+        async let workouts = fetchWorkouts(startDate: startDate, endDate: endDate)
 
-        let (summaries, weeklyActivities) = try await (dailySummaries, activities)
+        let (calories, steps, weeklyWorkouts) = try await (totalActiveCalories, totalSteps, workouts)
 
-        let totalCalories = summaries.reduce(0) { $0 + ($1.activeKilocalories ?? 0) }
-        let averageSteps = summaries.isEmpty ? 0 : summaries.reduce(0) { $0 + ($1.steps ?? 0) } / summaries.count
+        let upperBodyTypes: Set<HKWorkoutActivityType> = [
+            .traditionalStrengthTraining,
+            .functionalStrengthTraining,
+            .crossTraining,
+            .boxing,
+            .wrestling
+        ]
+        let lowerBodyTypes: Set<HKWorkoutActivityType> = [
+            .running,
+            .walking,
+            .hiking,
+            .stairClimbing,
+            .kickboxing,
+            .barre,
+            .elliptical,
+            .cycling
+        ]
+        let absTypes: Set<HKWorkoutActivityType> = [
+            .coreTraining,
+            .pilates,
+            .yoga
+        ]
+        let cardioTypes: Set<HKWorkoutActivityType> = [
+            .running,
+            .walking,
+            .cycling,
+            .swimming,
+            .highIntensityIntervalTraining,
+            .elliptical,
+            .rowing,
+            .stairClimbing
+        ]
 
-        let upperBodyKeywords = ["upper", "chest", "back", "shoulder", "arm", "bicep", "tricep"]
-        let lowerBodyKeywords = ["lower", "leg", "glute", "hamstring", "quad", "calf"]
-        let absKeywords = ["core", "abs", "abdominal"]
-        let cardioKeywords = ["run", "walk", "ride", "bike", "cardio", "swim", "row", "elliptical", "hiit"]
-
-        let upperBodyCount = weeklyActivities.countMatches(matchingAny: upperBodyKeywords)
-        let lowerBodyCount = weeklyActivities.countMatches(matchingAny: lowerBodyKeywords)
-        let absCount = weeklyActivities.countMatches(matchingAny: absKeywords)
-        let cardioCount = weeklyActivities.countMatches(matchingAny: cardioKeywords)
+        let upperBodyCount = weeklyWorkouts.count { upperBodyTypes.contains($0.workoutActivityType) }
+        let lowerBodyCount = weeklyWorkouts.count { lowerBodyTypes.contains($0.workoutActivityType) }
+        let absCount = weeklyWorkouts.count { absTypes.contains($0.workoutActivityType) }
+        let cardioCount = weeklyWorkouts.count { cardioTypes.contains($0.workoutActivityType) }
 
         return WearableStats(
-            activeCaloriesLastWeek: totalCalories,
-            averageWeeklyStepCount: averageSteps,
+            activeCaloriesLastWeek: Int(calories.rounded()),
+            averageWeeklyStepCount: Int((steps / 7.0).rounded()),
             upperBodySessions: upperBodyCount,
             lowerBodySessions: lowerBodyCount,
             absSessions: absCount,
@@ -140,67 +130,103 @@ struct GarminHealthAPIClient {
         )
     }
 
-    private func fetchDailySummaries(startDate: Date, endDate: Date) async throws -> [GarminDailySummary] {
-        let data = try await request(path: "dailies", startDate: startDate, endDate: endDate)
-        if let envelope = try? JSONDecoder().decode(GarminDailySummaryEnvelope.self, from: data) {
-            return envelope.dailies ?? []
-        }
-        return try JSONDecoder().decode([GarminDailySummary].self, from: data)
-    }
-
-    private func fetchActivities(startDate: Date, endDate: Date) async throws -> [GarminActivity] {
-        let data = try await request(path: "activities", startDate: startDate, endDate: endDate)
-        if let envelope = try? JSONDecoder().decode(GarminActivitiesEnvelope.self, from: data) {
-            return envelope.activities ?? []
-        }
-        return try JSONDecoder().decode([GarminActivity].self, from: data)
-    }
-
-    private func request(path: String, startDate: Date, endDate: Date) async throws -> Data {
-        var components = URLComponents(
-            url: config.baseURL.appendingPathComponent(path),
-            resolvingAgainstBaseURL: false
-        )
-        let startSeconds = Int(startDate.timeIntervalSince1970)
-        let endSeconds = Int(endDate.timeIntervalSince1970 + 86_399)
-        components?.queryItems = [
-            URLQueryItem(name: "uploadStartTimeInSeconds", value: "\(startSeconds)"),
-            URLQueryItem(name: "uploadEndTimeInSeconds", value: "\(endSeconds)")
-        ]
-
-        guard let url = components?.url else {
+    private func requestAuthorization() async throws {
+        guard
+            let stepCountType = HKObjectType.quantityType(forIdentifier: .stepCount),
+            let activeEnergyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
+            let workoutType = HKObjectType.workoutType() as HKSampleType?
+        else {
             throw NSError(
-                domain: "BestPT.Garmin",
-                code: -5,
-                userInfo: [NSLocalizedDescriptionKey: "Unable to build Garmin request URL."]
+                domain: "BestPT.HealthKit",
+                code: -3,
+                userInfo: [NSLocalizedDescriptionKey: "Required HealthKit data types are unavailable."]
             )
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        let (data, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw NSError(
-                domain: "BestPT.Garmin",
-                code: code,
-                userInfo: [NSLocalizedDescriptionKey: "Garmin API request failed with status code \(code)."]
-            )
-        }
-        return data
-    }
-}
-
-private extension Array where Element == GarminActivity {
-    func countMatches(matchingAny keywords: [String]) -> Int {
-        self.reduce(into: 0) { count, activity in
-            guard let type = activity.activityType?.lowercased() else { return }
-            if keywords.contains(where: { type.contains($0) }) {
-                count += 1
+        let readTypes: Set<HKObjectType> = [stepCountType, activeEnergyType, workoutType]
+        try await withCheckedThrowingContinuation { continuation in
+            store.requestAuthorization(toShare: [], read: readTypes) { success, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                if success {
+                    continuation.resume()
+                } else {
+                    continuation.resume(
+                        throwing: NSError(
+                            domain: "BestPT.HealthKit",
+                            code: -4,
+                            userInfo: [NSLocalizedDescriptionKey: "HealthKit permission was not granted."]
+                        )
+                    )
+                }
             }
+        }
+    }
+
+    private func sumQuantity(
+        type: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        startDate: Date,
+        endDate: Date
+    ) async throws -> Double {
+        guard let quantityType = HKObjectType.quantityType(forIdentifier: type) else {
+            throw NSError(
+                domain: "BestPT.HealthKit",
+                code: -5,
+                userInfo: [NSLocalizedDescriptionKey: "Could not load HealthKit type: \(type.rawValue)."]
+            )
+        }
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate.addingTimeInterval(86_399),
+            options: .strictStartDate
+        )
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsQuery(
+                quantityType: quantityType,
+                quantitySamplePredicate: predicate,
+                options: .cumulativeSum
+            ) { _, stats, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                let total = stats?.sumQuantity()?.doubleValue(for: unit) ?? 0
+                continuation.resume(returning: total)
+            }
+
+            store.execute(query)
+        }
+    }
+
+    private func fetchWorkouts(startDate: Date, endDate: Date) async throws -> [HKWorkout] {
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate.addingTimeInterval(86_399),
+            options: .strictStartDate
+        )
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: .workoutType(),
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let workouts = (samples as? [HKWorkout]) ?? []
+                continuation.resume(returning: workouts)
+            }
+
+            store.execute(query)
         }
     }
 }
@@ -219,7 +245,7 @@ struct PlaceholderWearableProvider: WearableDataProvider {
 
 @MainActor
 final class DashboardViewModel: ObservableObject {
-    @Published var selectedProvider: WearableProviderKind = .garminConnect
+    @Published var selectedProvider: WearableProviderKind = .appleHealth
     @Published var stats: WearableStats?
     @Published var isRefreshing = false
     @Published var errorMessage: String?
@@ -274,7 +300,7 @@ struct ContentView: View {
                 Section("Connected source") {
                     Text(viewModel.selectedProvider.rawValue)
                     if viewModel.isRefreshing {
-                        ProgressView("Refreshing Garmin data…")
+                        ProgressView("Refreshing Apple Health data…")
                     }
                     if let errorMessage = viewModel.errorMessage {
                         Text(errorMessage)
@@ -295,7 +321,7 @@ struct ContentView: View {
                             value: stats.refreshedAt.formatted(date: .abbreviated, time: .shortened)
                         )
                     } else {
-                        Text("No Garmin stats yet. Pull to refresh.")
+                        Text("No Apple Health stats yet. Pull to refresh.")
                             .foregroundStyle(.secondary)
                     }
                 }

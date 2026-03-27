@@ -56,16 +56,22 @@ python src/main.py
 
 ## iOS app
 
-`ios/VoilaWinnerApp` is a SwiftUI iOS app that displays:
-
-> "Voila! You have won unlimited free personal trainer sessions, enjoy!"
+`ios/VoilaWinnerApp` is a SwiftUI iOS app that reads activity/workout data from **Apple Health (HealthKit)** and shows a lightweight training dashboard.
 
 ### Install to your iPhone
 
 1. Open `ios/VoilaWinnerApp/VoilaWinnerApp.xcodeproj` in Xcode (macOS).
 2. Set your Apple Developer Team in **Signing & Capabilities**.
-3. Plug your iPhone into your Mac (or use wireless debugging).
-4. Select your iPhone as the run destination.
-5. Press **Run** in Xcode; it will build and install the app on your phone.
+3. In the target, confirm **HealthKit** capability is enabled.
+4. Plug your iPhone into your Mac (or use wireless debugging).
+5. Select your iPhone as the run destination.
+6. Press **Run** in Xcode; it will build and install the app on your phone.
+7. On first launch, allow Health access permissions when prompted.
+
+### HealthKit notes
+
+- The app requests read access for steps, active energy, and workouts.
+- Data comes from the iPhone Health app (which includes Apple Watch workouts synced via Apple Health).
+- If no data appears, open **Health app → Browse** and ensure those categories have recent entries.
 
 > Note: to distribute beyond your own device, use TestFlight/App Store via an Apple Developer account.
