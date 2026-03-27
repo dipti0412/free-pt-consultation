@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct VoilaWinnerAppApp: App {
+struct BestPTApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
