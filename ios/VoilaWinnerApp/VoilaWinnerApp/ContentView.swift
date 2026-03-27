@@ -112,7 +112,7 @@ private struct HealthKitClient {
         }
 
         let readTypes: Set<HKObjectType> = [activeEnergyType, heartRateType, workoutType]
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             store.requestAuthorization(toShare: [], read: readTypes) { success, error in
                 if let error {
                     continuation.resume(throwing: error)
