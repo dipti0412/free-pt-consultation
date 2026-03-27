@@ -15,9 +15,11 @@ free-pt-consultation/
 │   ├── pyproject.toml
 │   ├── src/
 │   │   ├── data_ingestion/
+│   │   │   ├── health_stats.py
 │   │   │   ├── models.py
 │   │   │   ├── router.py
 │   │   │   └── sources/
+│   │   │       ├── apple_health.py
 │   │   │       ├── garmin.py
 │   │   │       ├── intake_forms.py
 │   │   │       └── renpho.py
@@ -32,10 +34,12 @@ free-pt-consultation/
 
 ## Python data pipeline (research + source-specific inputs)
 
+- `data_ingestion/sources/apple_health.py`: Apple Health normalization logic.
 - `data_ingestion/sources/garmin.py`: Garmin normalization logic.
 - `data_ingestion/sources/renpho.py`: Renpho smart scale normalization logic.
 - `data_ingestion/sources/intake_forms.py`: Intake form normalization logic.
 - `data_ingestion/router.py`: source router so each source is handled explicitly.
+- `data_ingestion/health_stats.py`: health metric calculations from normalized records.
 - `research/extract.py`: PDF text extraction for research papers.
 - `research/summarize.py`: basic summary helper placeholder.
 
