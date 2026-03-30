@@ -1,67 +1,42 @@
 import SwiftUI
 
-struct Workout: Identifiable {
-    let id: UUID
-    let startTime: Date
-    let endTime: Date
-    let workoutBlocks: [WorkoutBlock]
-    let calories: Int
-}
+// MARK: - App Flow
 
-enum WorkoutBlock: Identifiable {
-    case strength(StrengthWorkoutBlock)
-    case cardio(CardioWorkoutBlock)
-
-    var id: UUID {
-        switch self {
-        case let .strength(block):
-            return block.id
-        case let .cardio(block):
-            return block.id
-        }
-    }
-}
-
-struct StrengthWorkoutBlock {
-    let id: UUID
-    var sets: [SetEntry]
-}
-
-struct CardioWorkoutBlock {
-    let id: UUID
-    let cardioType: CardioType
-    let durationMinutes: Int
-    let distanceMiles: Double
-}
-
-struct SetEntry: Identifiable {
-    let id: UUID
-    let exercise: StrengthExercise
-    let reps: Int
-    let weightLbs: Double
-}
-
-enum StrengthExercise: String, CaseIterable, Identifiable {
+enum StrengthExerciseCatalog: String, CaseIterable, Identifiable {
     case squat = "Squat"
     case benchPress = "Bench Press"
     case deadlift = "Deadlift"
     case shoulderPress = "Shoulder Press"
 
     var id: String { rawValue }
+
+    var exercise: Exercise {
+        switch self {
+        case .squat:
+            return Exercise(id: UUID(), name: rawValue, primaryMuscles: [.legs, .glutes], secondaryMuscles: [.core, .calves], isUpperBody: false, progressionIncrementLbs: 5)
+        case .benchPress:
+            return Exercise(id: UUID(), name: rawValue, primaryMuscles: [.chest, .triceps], secondaryMuscles: [.shoulders], isUpperBody: true, progressionIncrementLbs: 5)
+        case .deadlift:
+            return Exercise(id: UUID(), name: rawValue, primaryMuscles: [.back, .glutes], secondaryMuscles: [.legs, .core], isUpperBody: false, progressionIncrementLbs: 10)
+        case .shoulderPress:
+            return Exercise(id: UUID(), name: rawValue, primaryMuscles: [.shoulders], secondaryMuscles: [.triceps, .core], isUpperBody: true, progressionIncrementLbs: 2.5)
+        }
+    }
 }
 
-enum CardioType: String, CaseIterable, Identifiable {
-    case run = "Run"
-    case walk = "Walk"
-    case bike = "Bike"
-
-    var id: String { rawValue }
+struct LoggedSet: Identifiable {
+    let id: UUID
+    let exercise: Exercise
+    let setEntry: SetEntry
 }
 
 struct ActiveWorkoutDraft: Identifiable {
     let id: UUID
     let startTime: Date
     var workoutBlocks: [WorkoutBlock]
+    var loggedSets: [LoggedSet]
+    var totalDistanceMiles: Double
+    var totalCardioMinutes: Int
 }
 
 @MainActor
@@ -70,51 +45,79 @@ final class WorkoutFlowViewModel: ObservableObject {
     @Published var lastCompletedWorkout: Workout?
 
     func startWorkout() {
-        activeWorkout = ActiveWorkoutDraft(id: UUID(), startTime: .now, workoutBlocks: [])
+        activeWorkout = ActiveWorkoutDraft(
+            id: UUID(),
+            startTime: .now,
+            workoutBlocks: [],
+            loggedSets: [],
+            totalDistanceMiles: 0,
+            totalCardioMinutes: 0
+        )
     }
 
-    func addStrengthSet(exercise: StrengthExercise, reps: Int, weightLbs: Double) {
+    func addStrengthSet(exercise: Exercise, reps: Int, weightLbs: Double) {
         guard var draft = activeWorkout else { return }
-        let setEntry = SetEntry(id: UUID(), exercise: exercise, reps: reps, weightLbs: weightLbs)
+        let setEntry = SetEntry(id: UUID(), reps: reps, weightLbs: weightLbs, isCompleted: true)
+        draft.loggedSets.append(LoggedSet(id: UUID(), exercise: exercise, setEntry: setEntry))
 
-        if let existingStrengthIndex = draft.workoutBlocks.firstIndex(where: {
-            if case .strength = $0 { return true }
-            return false
-        }) {
-            guard case var .strength(strengthBlock) = draft.workoutBlocks[existingStrengthIndex] else {
-                return
+        if let blockIndex = draft.workoutBlocks.firstIndex(where: { $0.type == .strength }) {
+            if !draft.workoutBlocks[blockIndex].exercises.contains(where: { $0.name == exercise.name }) {
+                draft.workoutBlocks[blockIndex].exercises.append(exercise)
             }
-            strengthBlock.sets.append(setEntry)
-            draft.workoutBlocks[existingStrengthIndex] = .strength(strengthBlock)
         } else {
-            let newStrengthBlock = StrengthWorkoutBlock(id: UUID(), sets: [setEntry])
-            draft.workoutBlocks.append(.strength(newStrengthBlock))
+            draft.workoutBlocks.append(
+                WorkoutBlock(
+                    id: UUID(),
+                    type: .strength,
+                    exercises: [exercise],
+                    durationMinutes: nil,
+                    linkedWorkoutId: nil
+                )
+            )
         }
 
         activeWorkout = draft
     }
 
-    func addCardioBlock(cardioType: CardioType, durationMinutes: Int, distanceMiles: Double) {
+    func addCardioBlock(durationMinutes: Int, distanceMiles: Double) {
         guard var draft = activeWorkout else { return }
-        let cardioBlock = CardioWorkoutBlock(
-            id: UUID(),
-            cardioType: cardioType,
-            durationMinutes: durationMinutes,
-            distanceMiles: distanceMiles
+        draft.totalCardioMinutes += durationMinutes
+        draft.totalDistanceMiles += distanceMiles
+
+        draft.workoutBlocks.append(
+            WorkoutBlock(
+                id: UUID(),
+                type: .cardio,
+                exercises: [],
+                durationMinutes: durationMinutes,
+                linkedWorkoutId: nil
+            )
         )
-        draft.workoutBlocks.append(.cardio(cardioBlock))
+
         activeWorkout = draft
     }
 
     func stopWorkout() {
         guard let draft = activeWorkout else { return }
+
+        let endTime = Date.now
+        let elapsed = max(1, Int(endTime.timeIntervalSince(draft.startTime) / 60))
+        let caloriesEstimate = (draft.loggedSets.count * 8) + (draft.totalCardioMinutes * 10)
+        let pacePerMile = draft.totalDistanceMiles > 0 ? Double(draft.totalCardioMinutes) / draft.totalDistanceMiles : nil
+
         lastCompletedWorkout = Workout(
             id: UUID(),
             startTime: draft.startTime,
-            endTime: .now,
-            workoutBlocks: draft.workoutBlocks,
-            calories: 0
+            endTime: endTime,
+            type: .internalWorkout,
+            source: .manual,
+            durationMinutes: elapsed,
+            caloriesBurned: caloriesEstimate,
+            distanceMiles: draft.totalDistanceMiles > 0 ? draft.totalDistanceMiles : nil,
+            pacePerMile: pacePerMile,
+            workoutBlocks: draft.workoutBlocks
         )
+
         activeWorkout = nil
     }
 }
@@ -163,7 +166,16 @@ struct HomeScreen: View {
                         .font(.headline)
                     Text("Started: \(workout.startTime.formatted(date: .abbreviated, time: .shortened))")
                     Text("Ended: \(workout.endTime.formatted(date: .abbreviated, time: .shortened))")
-                    Text("Blocks: \(workout.workoutBlocks.count) • Calories: \(workout.calories)")
+                    Text("Type: \(workout.type.rawValue) • Source: \(workout.source.rawValue)")
+                    Text("Duration: \(workout.durationMinutes) min • Calories: \(workout.caloriesBurned)")
+                    Text("Blocks: \(workout.workoutBlocks.count)")
+                    if let miles = workout.distanceMiles {
+                        Text("Distance: \(miles.formatted(.number.precision(.fractionLength(0...2)))) mi")
+                    }
+                    if let pacePerMile = workout.pacePerMile,
+                       let pacePerKm = workout.pacePerKm {
+                        Text("Pace: \(pacePerMile.formatted(.number.precision(.fractionLength(1...2)))) min/mi • \(pacePerKm.formatted(.number.precision(.fractionLength(1...2)))) min/km")
+                    }
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -186,6 +198,7 @@ struct ActiveWorkoutScreen: View {
             List {
                 Section("Workout") {
                     Text("Started: \(draft.startTime.formatted(date: .abbreviated, time: .shortened))")
+                    Text("Blocks: \(draft.workoutBlocks.count)")
                 }
 
                 Section("Logged blocks") {
@@ -194,26 +207,31 @@ struct ActiveWorkoutScreen: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(draft.workoutBlocks) { block in
-                            switch block {
-                            case let .strength(strengthBlock):
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Strength")
-                                        .font(.headline)
-                                    ForEach(strengthBlock.sets) { set in
-                                        Text("• \(set.exercise.rawValue): \(set.reps) reps @ \(set.weightLbs.formatted(.number.precision(.fractionLength(0...2)))) lbs")
-                                            .font(.subheadline)
-                                    }
-                                }
-                                .padding(.vertical, 4)
-                            case let .cardio(cardioBlock):
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Cardio")
-                                        .font(.headline)
-                                    Text("\(cardioBlock.cardioType.rawValue) • \(cardioBlock.durationMinutes) min • \(cardioBlock.distanceMiles.formatted(.number.precision(.fractionLength(0...2)))) mi")
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(block.type.rawValue)
+                                    .font(.headline)
+                                if !block.exercises.isEmpty {
+                                    Text("Exercises: \(block.exercises.map(\.name).joined(separator: ", "))")
                                         .font(.subheadline)
                                 }
-                                .padding(.vertical, 4)
+                                if let minutes = block.durationMinutes {
+                                    Text("Duration: \(minutes) min")
+                                        .font(.subheadline)
+                                }
                             }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+
+                Section("Logged sets") {
+                    if draft.loggedSets.isEmpty {
+                        Text("No sets logged yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(draft.loggedSets) { item in
+                            Text("• \(item.exercise.name): \(item.setEntry.reps) reps @ \(item.setEntry.weightLbs.formatted(.number.precision(.fractionLength(0...2)))) lbs")
+                                .font(.subheadline)
                         }
                     }
                 }
@@ -249,14 +267,14 @@ struct AddStrengthSetScreen: View {
     @ObservedObject var viewModel: WorkoutFlowViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedExercise: StrengthExercise = .squat
+    @State private var selectedExercise: StrengthExerciseCatalog = .squat
     @State private var reps = 8
     @State private var weightLbs = 135.0
 
     var body: some View {
         Form {
             Picker("Exercise", selection: $selectedExercise) {
-                ForEach(StrengthExercise.allCases) { exercise in
+                ForEach(StrengthExerciseCatalog.allCases) { exercise in
                     Text(exercise.rawValue).tag(exercise)
                 }
             }
@@ -273,7 +291,7 @@ struct AddStrengthSetScreen: View {
             }
 
             Button("Add Set") {
-                viewModel.addStrengthSet(exercise: selectedExercise, reps: reps, weightLbs: weightLbs)
+                viewModel.addStrengthSet(exercise: selectedExercise.exercise, reps: reps, weightLbs: weightLbs)
                 dismiss()
             }
             .buttonStyle(.borderedProminent)
@@ -287,18 +305,11 @@ struct AddCardioBlockScreen: View {
     @ObservedObject var viewModel: WorkoutFlowViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedCardioType: CardioType = .run
     @State private var durationMinutes = 20
     @State private var distanceMiles = 2.0
 
     var body: some View {
         Form {
-            Picker("Cardio Type", selection: $selectedCardioType) {
-                ForEach(CardioType.allCases) { cardioType in
-                    Text(cardioType.rawValue).tag(cardioType)
-                }
-            }
-
             Stepper("Duration (minutes): \(durationMinutes)", value: $durationMinutes, in: 1 ... 300)
 
             HStack {
@@ -311,11 +322,7 @@ struct AddCardioBlockScreen: View {
             }
 
             Button("Add Cardio") {
-                viewModel.addCardioBlock(
-                    cardioType: selectedCardioType,
-                    durationMinutes: durationMinutes,
-                    distanceMiles: distanceMiles
-                )
+                viewModel.addCardioBlock(durationMinutes: durationMinutes, distanceMiles: distanceMiles)
                 dismiss()
             }
             .buttonStyle(.borderedProminent)
