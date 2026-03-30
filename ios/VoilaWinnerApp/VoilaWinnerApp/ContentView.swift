@@ -1,398 +1,327 @@
-import Foundation
-import HealthKit
 import SwiftUI
 
-protocol WearableDataProvider {
-    var sourceName: String { get }
-    func refreshStats() async throws -> WearableStats
-}
-
-struct WearableStats {
-    let activeCaloriesLastWeek: Int
-    let workoutsLast7Days: [WorkoutSummary]
-}
-
-struct WorkoutSummary: Identifiable {
+struct Workout: Identifiable {
     let id: UUID
-    let date: Date
-    let burnedCalories: Int
-    let averageHeartRate: Int?
+    let startTime: Date
+    let endTime: Date
+    let workoutBlocks: [WorkoutBlock]
+    let calories: Int
 }
 
-enum WearableProviderKind: String, CaseIterable, Identifiable {
-    case appleHealth = "Apple Health"
-    case whoop = "Whoop"
+enum WorkoutBlock: Identifiable {
+    case strength(StrengthWorkoutBlock)
+    case cardio(CardioWorkoutBlock)
+
+    var id: UUID {
+        switch self {
+        case let .strength(block):
+            return block.id
+        case let .cardio(block):
+            return block.id
+        }
+    }
+}
+
+struct StrengthWorkoutBlock {
+    let id: UUID
+    var sets: [SetEntry]
+}
+
+struct CardioWorkoutBlock {
+    let id: UUID
+    let cardioType: CardioType
+    let durationMinutes: Int
+    let distanceMiles: Double
+}
+
+struct SetEntry: Identifiable {
+    let id: UUID
+    let exercise: StrengthExercise
+    let reps: Int
+    let weightLbs: Double
+}
+
+enum StrengthExercise: String, CaseIterable, Identifiable {
+    case squat = "Squat"
+    case benchPress = "Bench Press"
+    case deadlift = "Deadlift"
+    case shoulderPress = "Shoulder Press"
 
     var id: String { rawValue }
-
-    var provider: WearableDataProvider {
-        switch self {
-        case .appleHealth:
-            return AppleHealthProvider()
-        case .whoop:
-            return PlaceholderWearableProvider(sourceName: rawValue)
-        }
-    }
 }
 
-struct AppleHealthProvider: WearableDataProvider {
-    let sourceName = WearableProviderKind.appleHealth.rawValue
+enum CardioType: String, CaseIterable, Identifiable {
+    case run = "Run"
+    case walk = "Walk"
+    case bike = "Bike"
 
-    func refreshStats() async throws -> WearableStats {
-        let client = HealthKitClient()
-        return try await client.fetchWeeklyStats()
-    }
+    var id: String { rawValue }
 }
 
-private struct HealthKitClient {
-    private let store = HKHealthStore()
-
-    func fetchWeeklyStats(now: Date = .now) async throws -> WearableStats {
-        guard HKHealthStore.isHealthDataAvailable() else {
-            throw NSError(
-                domain: "BestPT.HealthKit",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Health data is not available on this device."]
-            )
-        }
-
-        try await requestAuthorization()
-
-        let endDate = now
-        guard let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate) else {
-            throw NSError(
-                domain: "BestPT.HealthKit",
-                code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "Could not compute last-week date range."]
-            )
-        }
-
-        async let totalActiveCalories = sumQuantity(
-            type: .activeEnergyBurned,
-            unit: .kilocalorie(),
-            startDate: startDate,
-            endDate: endDate
-        )
-        async let workouts = fetchWorkouts(startDate: startDate, endDate: endDate)
-
-        let (calories, weeklyWorkouts) = try await (totalActiveCalories, workouts)
-        var workoutSummaries: [WorkoutSummary] = []
-        for workout in weeklyWorkouts.sorted(by: { $0.startDate > $1.startDate }) {
-            let workoutCalories = Int((workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) ?? 0).rounded())
-            let averageHeartRate: Int?
-            do {
-                averageHeartRate = try await fetchAverageHeartRate(for: workout).map { Int($0.rounded()) }
-            } catch {
-                averageHeartRate = nil
-            }
-            workoutSummaries.append(
-                WorkoutSummary(
-                    id: workout.uuid,
-                    date: workout.startDate,
-                    burnedCalories: workoutCalories,
-                    averageHeartRate: averageHeartRate
-                )
-            )
-        }
-
-        return WearableStats(
-            activeCaloriesLastWeek: Int(calories.rounded()),
-            workoutsLast7Days: workoutSummaries
-        )
-    }
-
-    private func requestAuthorization() async throws {
-        guard
-            let activeEnergyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
-            let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate),
-            let workoutType = HKObjectType.workoutType() as HKSampleType?
-        else {
-            throw NSError(
-                domain: "BestPT.HealthKit",
-                code: -3,
-                userInfo: [NSLocalizedDescriptionKey: "Required HealthKit data types are unavailable."]
-            )
-        }
-
-        let readTypes: Set<HKObjectType> = [activeEnergyType, heartRateType, workoutType]
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            store.requestAuthorization(toShare: [], read: readTypes) { success, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                if success {
-                    continuation.resume()
-                } else {
-                    continuation.resume(
-                        throwing: NSError(
-                            domain: "BestPT.HealthKit",
-                            code: -4,
-                            userInfo: [NSLocalizedDescriptionKey: "HealthKit permission was not granted."]
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    private func sumQuantity(
-        type: HKQuantityTypeIdentifier,
-        unit: HKUnit,
-        startDate: Date,
-        endDate: Date
-    ) async throws -> Double {
-        guard let quantityType = HKObjectType.quantityType(forIdentifier: type) else {
-            throw NSError(
-                domain: "BestPT.HealthKit",
-                code: -5,
-                userInfo: [NSLocalizedDescriptionKey: "Could not load HealthKit type: \(type.rawValue)."]
-            )
-        }
-
-        let predicate = HKQuery.predicateForSamples(
-            withStart: startDate,
-            end: endDate.addingTimeInterval(86_399),
-            options: .strictStartDate
-        )
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKStatisticsQuery(
-                quantityType: quantityType,
-                quantitySamplePredicate: predicate,
-                options: .cumulativeSum
-            ) { _, stats, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                let total = stats?.sumQuantity()?.doubleValue(for: unit) ?? 0
-                continuation.resume(returning: total)
-            }
-
-            store.execute(query)
-        }
-    }
-
-    private func fetchWorkouts(startDate: Date, endDate: Date) async throws -> [HKWorkout] {
-        let predicate = HKQuery.predicateForSamples(
-            withStart: startDate,
-            end: endDate.addingTimeInterval(86_399),
-            options: .strictStartDate
-        )
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: .workoutType(),
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: nil
-            ) { _, samples, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let workouts = (samples as? [HKWorkout]) ?? []
-                continuation.resume(returning: workouts)
-            }
-
-            store.execute(query)
-        }
-    }
-
-    private func fetchAverageHeartRate(for workout: HKWorkout) async throws -> Double? {
-        guard let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate) else {
-            return nil
-        }
-
-        let predicate = HKQuery.predicateForObjects(from: workout)
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKStatisticsQuery(
-                quantityType: heartRateType,
-                quantitySamplePredicate: predicate,
-                options: .discreteAverage
-            ) { _, statistics, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let bpmUnit = HKUnit.count().unitDivided(by: .minute())
-                let avgValue = statistics?.averageQuantity()?.doubleValue(for: bpmUnit)
-                continuation.resume(returning: avgValue)
-            }
-            store.execute(query)
-        }
-    }
-}
-
-struct PlaceholderWearableProvider: WearableDataProvider {
-    let sourceName: String
-
-    func refreshStats() async throws -> WearableStats {
-        throw NSError(
-            domain: "BestPT.WearableProvider",
-            code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "\(sourceName) support is coming soon."]
-        )
-    }
+struct ActiveWorkoutDraft: Identifiable {
+    let id: UUID
+    let startTime: Date
+    var workoutBlocks: [WorkoutBlock]
 }
 
 @MainActor
-final class DashboardViewModel: ObservableObject {
-    @Published var selectedProvider: WearableProviderKind = .appleHealth
-    @Published var stats: WearableStats?
-    @Published var isRefreshing = false
-    @Published var errorMessage: String?
+final class WorkoutFlowViewModel: ObservableObject {
+    @Published var activeWorkout: ActiveWorkoutDraft?
+    @Published var lastCompletedWorkout: Workout?
 
-    @Published var weightGoal = ""
-    @Published var stressGoal = ""
-    @Published var sleepGoal = ""
-    @Published var consistencyGoal = ""
+    func startWorkout() {
+        activeWorkout = ActiveWorkoutDraft(id: UUID(), startTime: .now, workoutBlocks: [])
+    }
 
-    func refreshWearableData() async {
-        isRefreshing = true
-        errorMessage = nil
+    func addStrengthSet(exercise: StrengthExercise, reps: Int, weightLbs: Double) {
+        guard var draft = activeWorkout else { return }
+        let setEntry = SetEntry(id: UUID(), exercise: exercise, reps: reps, weightLbs: weightLbs)
 
-        do {
-            stats = try await selectedProvider.provider.refreshStats()
-        } catch {
-            errorMessage = error.localizedDescription
+        if let existingStrengthIndex = draft.workoutBlocks.firstIndex(where: {
+            if case .strength = $0 { return true }
+            return false
+        }) {
+            guard case var .strength(strengthBlock) = draft.workoutBlocks[existingStrengthIndex] else {
+                return
+            }
+            strengthBlock.sets.append(setEntry)
+            draft.workoutBlocks[existingStrengthIndex] = .strength(strengthBlock)
+        } else {
+            let newStrengthBlock = StrengthWorkoutBlock(id: UUID(), sets: [setEntry])
+            draft.workoutBlocks.append(.strength(newStrengthBlock))
         }
 
-        isRefreshing = false
+        activeWorkout = draft
+    }
+
+    func addCardioBlock(cardioType: CardioType, durationMinutes: Int, distanceMiles: Double) {
+        guard var draft = activeWorkout else { return }
+        let cardioBlock = CardioWorkoutBlock(
+            id: UUID(),
+            cardioType: cardioType,
+            durationMinutes: durationMinutes,
+            distanceMiles: distanceMiles
+        )
+        draft.workoutBlocks.append(.cardio(cardioBlock))
+        activeWorkout = draft
+    }
+
+    func stopWorkout() {
+        guard let draft = activeWorkout else { return }
+        lastCompletedWorkout = Workout(
+            id: UUID(),
+            startTime: draft.startTime,
+            endTime: .now,
+            workoutBlocks: draft.workoutBlocks,
+            calories: 0
+        )
+        activeWorkout = nil
     }
 }
 
 struct ContentView: View {
-    @StateObject private var viewModel = DashboardViewModel()
+    @StateObject private var viewModel = WorkoutFlowViewModel()
+    @State private var showActiveWorkout = false
 
     var body: some View {
-        TabView {
-            youTab
-                .tabItem {
-                    Label("You", systemImage: "person.crop.circle")
-                }
-
-            goalsTab
-                .tabItem {
-                    Label("Your goals", systemImage: "target")
-                }
-
-            motivationTab
-                .tabItem {
-                    Label("Just do it", systemImage: "figure.run")
-                }
-        }
-        .task {
-            await viewModel.refreshWearableData()
-        }
-    }
-
-    private var youTab: some View {
         NavigationStack {
-            List {
-                Section("Your latest stats") {
-                    Text("Source: \(viewModel.selectedProvider.rawValue)")
-                        .foregroundStyle(.secondary)
-
-                    if viewModel.isRefreshing {
-                        ProgressView("Refreshing Apple Health data…")
-                    }
-
-                    if let errorMessage = viewModel.errorMessage {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                    }
-
-                    if let stats = viewModel.stats {
-                        statRow(title: "Active Energy (last 7 days)", value: "\(stats.activeCaloriesLastWeek) kcal")
-                    } else if viewModel.isRefreshing {
-                        Text("Fetching Active Energy from Apple Health…")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("No Apple Health stats yet. Tap refresh to request Apple Health access.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Workouts in last 7 days") {
-                    if let stats = viewModel.stats, !stats.workoutsLast7Days.isEmpty {
-                        ForEach(stats.workoutsLast7Days) { workout in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(workout.date.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.headline)
-                                Text("Burned Calories: \(workout.burnedCalories) kcal")
-                                Text("Average Heart Rate: \(workout.averageHeartRate.map { "\($0) bpm" } ?? "N/A")")
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    } else if viewModel.stats != nil {
-                        Text("No workouts recorded in the last 7 days.")
-                            .foregroundStyle(.secondary)
-                    } else if viewModel.isRefreshing {
-                        Text("Fetching workouts from Apple Health…")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("No workout stats yet. Tap refresh to request Apple Health access.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .refreshable {
-                await viewModel.refreshWearableData()
-            }
-            .navigationTitle("You")
-        }
-    }
-
-    private var goalsTab: some View {
-        NavigationStack {
-            Form {
-                Section("Set goals") {
-                    TextField("Weight goal (e.g. lose 5 lbs)", text: $viewModel.weightGoal)
-                    TextField("Stress goal", text: $viewModel.stressGoal)
-                    TextField("Sleep goal", text: $viewModel.sleepGoal)
-                    TextField("Consistency goal", text: $viewModel.consistencyGoal)
-                }
-            }
-            .navigationTitle("Your goals")
-        }
-    }
-
-    private var motivationTab: some View {
-        ZStack {
-            LinearGradient(
-                colors: [.orange.opacity(0.9), .pink.opacity(0.9)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+            HomeScreen(
+                startWorkout: {
+                    viewModel.startWorkout()
+                    showActiveWorkout = true
+                },
+                lastCompletedWorkout: viewModel.lastCompletedWorkout
             )
-            .ignoresSafeArea()
-
-            VStack(spacing: 16) {
-                Image(systemName: "flame.fill")
-                    .font(.system(size: 52))
-                    .foregroundStyle(.white)
-                Text("Just do it")
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(.white)
-                Text("Show up today. Your future self will thank you.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white.opacity(0.95))
-                    .padding(.horizontal, 24)
+            .navigationDestination(isPresented: $showActiveWorkout) {
+                ActiveWorkoutScreen(
+                    viewModel: viewModel,
+                    onStopWorkout: {
+                        showActiveWorkout = false
+                    }
+                )
             }
         }
     }
+}
 
-    private func statRow(title: String, value: String) -> some View {
-        HStack {
-            Text(title)
+struct HomeScreen: View {
+    let startWorkout: () -> Void
+    let lastCompletedWorkout: Workout?
+
+    var body: some View {
+        VStack(spacing: 20) {
             Spacer()
-            Text(value)
-                .fontWeight(.semibold)
+            Text("Manual Workout Logger")
+                .font(.title2.bold())
+
+            Button("Start Workout", action: startWorkout)
+                .buttonStyle(.borderedProminent)
+
+            if let workout = lastCompletedWorkout {
+                VStack(spacing: 8) {
+                    Text("Last Workout")
+                        .font(.headline)
+                    Text("Started: \(workout.startTime.formatted(date: .abbreviated, time: .shortened))")
+                    Text("Ended: \(workout.endTime.formatted(date: .abbreviated, time: .shortened))")
+                    Text("Blocks: \(workout.workoutBlocks.count) • Calories: \(workout.calories)")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            }
+            Spacer()
         }
+        .padding()
+        .navigationTitle("Home")
+    }
+}
+
+struct ActiveWorkoutScreen: View {
+    @ObservedObject var viewModel: WorkoutFlowViewModel
+    let onStopWorkout: () -> Void
+
+    var body: some View {
+        if let draft = viewModel.activeWorkout {
+            List {
+                Section("Workout") {
+                    Text("Started: \(draft.startTime.formatted(date: .abbreviated, time: .shortened))")
+                }
+
+                Section("Logged blocks") {
+                    if draft.workoutBlocks.isEmpty {
+                        Text("No blocks logged yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(draft.workoutBlocks) { block in
+                            switch block {
+                            case let .strength(strengthBlock):
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Strength")
+                                        .font(.headline)
+                                    ForEach(strengthBlock.sets) { set in
+                                        Text("• \(set.exercise.rawValue): \(set.reps) reps @ \(set.weightLbs.formatted(.number.precision(.fractionLength(0...2)))) lbs")
+                                            .font(.subheadline)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            case let .cardio(cardioBlock):
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Cardio")
+                                        .font(.headline)
+                                    Text("\(cardioBlock.cardioType.rawValue) • \(cardioBlock.durationMinutes) min • \(cardioBlock.distanceMiles.formatted(.number.precision(.fractionLength(0...2)))) mi")
+                                        .font(.subheadline)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                }
+
+                Section("Actions") {
+                    NavigationLink("Add Strength Set") {
+                        AddStrengthSetScreen(viewModel: viewModel)
+                    }
+
+                    NavigationLink("Add Cardio Block") {
+                        AddCardioBlockScreen(viewModel: viewModel)
+                    }
+
+                    Button(role: .destructive) {
+                        viewModel.stopWorkout()
+                        onStopWorkout()
+                    } label: {
+                        Text("Stop Workout")
+                    }
+                }
+            }
+            .navigationTitle("Active Workout")
+            .navigationBarBackButtonHidden(true)
+        } else {
+            Text("No active workout.")
+                .foregroundStyle(.secondary)
+                .navigationTitle("Active Workout")
+        }
+    }
+}
+
+struct AddStrengthSetScreen: View {
+    @ObservedObject var viewModel: WorkoutFlowViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedExercise: StrengthExercise = .squat
+    @State private var reps = 8
+    @State private var weightLbs = 135.0
+
+    var body: some View {
+        Form {
+            Picker("Exercise", selection: $selectedExercise) {
+                ForEach(StrengthExercise.allCases) { exercise in
+                    Text(exercise.rawValue).tag(exercise)
+                }
+            }
+
+            Stepper("Reps: \(reps)", value: $reps, in: 1 ... 100)
+
+            HStack {
+                Text("Weight (lbs)")
+                Spacer()
+                TextField("Weight", value: $weightLbs, format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 100)
+            }
+
+            Button("Add Set") {
+                viewModel.addStrengthSet(exercise: selectedExercise, reps: reps, weightLbs: weightLbs)
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .navigationTitle("Add Strength Set")
+    }
+}
+
+struct AddCardioBlockScreen: View {
+    @ObservedObject var viewModel: WorkoutFlowViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedCardioType: CardioType = .run
+    @State private var durationMinutes = 20
+    @State private var distanceMiles = 2.0
+
+    var body: some View {
+        Form {
+            Picker("Cardio Type", selection: $selectedCardioType) {
+                ForEach(CardioType.allCases) { cardioType in
+                    Text(cardioType.rawValue).tag(cardioType)
+                }
+            }
+
+            Stepper("Duration (minutes): \(durationMinutes)", value: $durationMinutes, in: 1 ... 300)
+
+            HStack {
+                Text("Distance (miles)")
+                Spacer()
+                TextField("Distance", value: $distanceMiles, format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 100)
+            }
+
+            Button("Add Cardio") {
+                viewModel.addCardioBlock(
+                    cardioType: selectedCardioType,
+                    durationMinutes: durationMinutes,
+                    distanceMiles: distanceMiles
+                )
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .navigationTitle("Add Cardio Block")
     }
 }
 
