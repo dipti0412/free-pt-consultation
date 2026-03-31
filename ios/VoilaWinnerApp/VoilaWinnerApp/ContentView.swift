@@ -52,7 +52,7 @@ final class WorkoutFlowViewModel: ObservableObject {
     @Published var showRestTimer = false
     @Published var completedSummary: CompletedWorkoutSummary?
 
-    @Published var selectedTab: RootTab = .dashboard
+    @Published var selectedTab: RootTab = .home
 
     init() {
         let pushExercises = [
@@ -162,7 +162,7 @@ final class WorkoutFlowViewModel: ObservableObject {
         activeExerciseProgress = []
         showRestTimer = false
         restTimerSecondsRemaining = 0
-        selectedTab = .dashboard
+        selectedTab = .home
     }
 
     func finishWorkout() {
@@ -246,7 +246,7 @@ final class WorkoutFlowViewModel: ObservableObject {
 
     func doneWithSummary() {
         completedSummary = nil
-        selectedTab = .dashboard
+        selectedTab = .home
     }
 
     static func sampleHistory() -> [Workout] {
@@ -270,9 +270,7 @@ final class WorkoutFlowViewModel: ObservableObject {
 }
 
 enum RootTab: String, Hashable {
-    case dashboard
-    case templates
-    case history
+    case home
     case active
     case summary
 }
@@ -285,35 +283,27 @@ struct ContentView: View {
             NavigationStack {
                 DashboardScreen(viewModel: viewModel)
             }
-            .tag(RootTab.dashboard)
+            .tag(RootTab.home)
             .tabItem { Label("Home", systemImage: "house.fill") }
-
-            NavigationStack {
-                TemplateLibraryScreen(viewModel: viewModel)
-            }
-            .tag(RootTab.templates)
-            .tabItem { Label("Templates", systemImage: "square.grid.2x2.fill") }
-
-            NavigationStack {
-                HistoryAnalyticsScreen(viewModel: viewModel)
-            }
-            .tag(RootTab.history)
-            .tabItem { Label("History", systemImage: "chart.xyaxis.line") }
-
-            NavigationStack {
-                ActiveWorkoutScreen(viewModel: viewModel)
-            }
-            .tag(RootTab.active)
-            .tabItem { Label("Workout", systemImage: "bolt.heart.fill") }
-
-            NavigationStack {
-                WorkoutCompleteScreen(viewModel: viewModel)
-            }
-            .tag(RootTab.summary)
-            .tabItem { Label("Complete", systemImage: "checkmark.seal.fill") }
         }
         .tint(Color(red: 0.26, green: 0.48, blue: 1.0))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fullScreenCover(isPresented: Binding(
+            get: { viewModel.selectedTab == .active },
+            set: { if !$0 && viewModel.selectedTab == .active { viewModel.cancelWorkout() } }
+        )) {
+            NavigationStack {
+                ActiveWorkoutScreen(viewModel: viewModel)
+            }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { viewModel.selectedTab == .summary && viewModel.completedSummary != nil },
+            set: { if !$0 && viewModel.selectedTab == .summary { viewModel.doneWithSummary() } }
+        )) {
+            NavigationStack {
+                WorkoutCompleteScreen(viewModel: viewModel)
+            }
+        }
     }
 }
 
@@ -321,106 +311,59 @@ struct ContentView: View {
 
 struct DashboardScreen: View {
     @ObservedObject var viewModel: WorkoutFlowViewModel
-    @State private var showTemplatePicker = false
+    @State private var showCreateTemplate = false
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Training Dashboard")
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(.white)
-
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("Existing workout templates")
+                        .font(.title2.bold())
+                    Spacer()
                     Button {
-                        showTemplatePicker = true
+                        showCreateTemplate = true
                     } label: {
-                        HStack {
-                            Image(systemName: "play.circle.fill")
-                            Text("Start Workout")
-                                .fontWeight(.bold)
-                        }
-                        .frame(maxWidth: .infinity)
+                        Text("+Template")
                     }
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
                 }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    LinearGradient(
-                        colors: [Color(red: 0.08, green: 0.10, blue: 0.23), Color(red: 0.16, green: 0.08, blue: 0.30)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 22))
 
-                quickStatsCard
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Recent Workouts")
-                        .font(.title3.bold())
-
-                    ForEach(viewModel.workoutHistory.prefix(8)) { workout in
-                        NavigationLink {
-                            WorkoutDetailView(workout: workout)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Strength Session")
-                                        .font(.headline)
-                                        .foregroundStyle(.primary)
-                                    Text(workout.startTime.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 4) {
-                                    Text("\(workout.durationMinutes)m")
-                                    Text("\(max(1, workout.durationMinutes / 10)) ex")
-                                }
-                                .font(.caption.bold())
+                ForEach(viewModel.templates) { template in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(template.name)
+                                .font(.headline)
+                            Spacer()
+                            Text("\(template.exercises.count) exercises")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
+
+                        Text("Last performed: \(template.lastPerformed?.formatted(date: .abbreviated, time: .omitted) ?? "Never")")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Spacer()
+                            Button("Start Workout") {
+                                viewModel.startWorkout(with: template)
                             }
-                            .padding()
-                            .background(Color(.secondarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .buttonStyle(.borderedProminent)
                         }
                     }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
             }
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("Home")
-        .sheet(isPresented: $showTemplatePicker) {
-            TemplateSelectionModal(viewModel: viewModel)
-                .presentationDetents([.fraction(0.5), .medium])
+        .sheet(isPresented: $showCreateTemplate) {
+            CreateEditTemplateScreen(viewModel: viewModel)
         }
-    }
-
-    private var quickStatsCard: some View {
-        HStack(spacing: 12) {
-            statBlock(title: "This Week", value: "\(viewModel.weeklyWorkoutCount)")
-            statBlock(title: "Streak", value: "\(viewModel.currentStreak) days")
-            statBlock(title: "Last", value: viewModel.lastWorkoutDate?.formatted(date: .abbreviated, time: .omitted) ?? "—")
-        }
-        .padding()
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func statBlock(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.headline.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -583,7 +526,7 @@ struct CreateEditTemplateScreen: View {
                     }
                     .buttonStyle(.bordered)
 
-                    Button("Save Template") {
+                    Button("Save") {
                         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !draftExercises.isEmpty else { return }
                         viewModel.templates.append(
                             WorkoutTemplate(id: UUID(), name: name, exercises: draftExercises, lastPerformed: nil)
@@ -595,18 +538,11 @@ struct CreateEditTemplateScreen: View {
                 }
             }
             .padding()
-            .navigationTitle("Create Template")
+            .navigationTitle("New Template")
             .toolbar { EditButton() }
             .sheet(isPresented: $showExerciseSearch) {
                 ExerciseSearchModal { exercise in
                     draftExercises.append(exercise)
-                }
-            }
-            .onAppear {
-                if draftExercises.isEmpty {
-                    draftExercises = [
-                        TemplateExercise(id: UUID(), name: "Bench Press", sets: 3, category: .chest, notes: "", lastPerformance: "3x225 lbs")
-                    ]
                 }
             }
         }
