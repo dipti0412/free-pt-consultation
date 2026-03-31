@@ -619,12 +619,13 @@ struct ActiveWorkoutScreen: View {
     @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if let template = viewModel.activeTemplate {
-                topBar(templateName: template.name)
-
                 ScrollView {
-                    LazyVStack(spacing: 12) {
+                    VStack(spacing: 0) {
+                        topBar(templateName: template.name)
+
+                        LazyVStack(spacing: 12) {
                         ForEach($viewModel.activeExerciseProgress) { $exercise in
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(exercise.exercise.name)
@@ -672,12 +673,11 @@ struct ActiveWorkoutScreen: View {
                             .background(Color(.secondarySystemBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 16))
                         }
+                        }
+                        .padding()
                     }
-                    .padding()
                 }
-                .frame(maxHeight: .infinity)
-
-                bottomBar
+                .scrollDismissesKeyboard(.interactively)
             } else {
                 ContentUnavailableView("No Active Workout", systemImage: "bolt.slash", description: Text("Start from Dashboard or Templates."))
             }
@@ -697,7 +697,13 @@ struct ActiveWorkoutScreen: View {
             viewModel.restTimerTick()
         }
         .navigationBarBackButtonHidden(true)
+        .safeAreaInset(edge: .bottom) {
+            if viewModel.activeTemplate != nil {
+                bottomBar
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(.systemBackground).ignoresSafeArea())
     }
 
     private func topBar(templateName: String) -> some View {
@@ -792,47 +798,57 @@ struct WorkoutCompleteScreen: View {
     @State private var notes = ""
 
     var body: some View {
-        VStack {
-            if let summary = viewModel.completedSummary {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Workout Complete")
-                        .font(.largeTitle.bold())
+        ScrollView {
+            VStack {
+                if let summary = viewModel.completedSummary {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Workout Complete")
+                            .font(.title.bold())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
 
-                    metric(title: "Total duration", value: formatDuration(summary.durationSeconds))
-                    metric(title: "Exercises completed", value: "\(summary.exercisesCompleted)")
-                    metric(title: "Total sets", value: "\(summary.totalSets)")
-                    metric(title: "Total volume", value: "\(Int(summary.totalVolume)) lbs")
+                        metric(title: "Total duration", value: formatDuration(summary.durationSeconds))
+                        metric(title: "Exercises completed", value: "\(summary.exercisesCompleted)")
+                        metric(title: "Total sets", value: "\(summary.totalSets)")
+                        metric(title: "Total volume", value: "\(Int(summary.totalVolume)) lbs")
 
-                    if !summary.personalRecords.isEmpty {
-                        Text("Personal Records")
-                            .font(.headline)
-                        ForEach(summary.personalRecords, id: \.self) { pr in
-                            Label(pr, systemImage: "star.fill")
-                                .foregroundStyle(.yellow)
+                        if !summary.personalRecords.isEmpty {
+                            Text("Personal Records")
+                                .font(.headline)
+                            ForEach(summary.personalRecords, id: \.self) { pr in
+                                Label(pr, systemImage: "star.fill")
+                                    .foregroundStyle(.yellow)
+                            }
                         }
+
+                        TextField("Add notes", text: $notes, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("Close Summary") {
+                            viewModel.doneWithSummary()
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-
-                    TextField("Add notes", text: $notes, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-
-                    Button("Share Summary") {}
-                        .buttonStyle(.bordered)
-
-                    Button("Done") {
-                        viewModel.doneWithSummary()
-                    }
-                    .buttonStyle(.borderedProminent)
+                    .padding()
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding()
+                } else {
+                    ContentUnavailableView("No Summary Yet", systemImage: "checkmark.seal", description: Text("Finish an active workout to view your summary."))
                 }
-                .padding()
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .padding()
-            } else {
-                ContentUnavailableView("No Summary Yet", systemImage: "checkmark.seal", description: Text("Finish an active workout to view your summary."))
             }
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .navigationTitle("Complete")
+        .background(Color(.systemBackground).ignoresSafeArea())
+        .navigationTitle("Workout Summary")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Close") {
+                    viewModel.doneWithSummary()
+                }
+            }
+        }
     }
 
     private func metric(title: String, value: String) -> some View {
