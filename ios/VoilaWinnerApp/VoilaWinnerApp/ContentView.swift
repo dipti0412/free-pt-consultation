@@ -290,7 +290,7 @@ struct ContentView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .toolbarBackground(Color(.systemBackground), for: .tabBar)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .bottom)
+        .ignoresSafeArea(.container, edges: .all)
         .fullScreenCover(isPresented: Binding(
             get: { viewModel.selectedTab == .active },
             set: { if !$0 && viewModel.selectedTab == .active { viewModel.cancelWorkout() } }
@@ -372,7 +372,7 @@ templates")
         .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationBarHidden(true)
-        .safeAreaPadding(.bottom, 0)
+        .ignoresSafeArea(.container, edges: .all)
         .sheet(isPresented: $showCreateTemplate) {
             CreateEditTemplateScreen(viewModel: viewModel)
         }
@@ -709,11 +709,12 @@ struct ActiveWorkoutScreen: View {
             viewModel.restTimerTick()
         }
         .navigationBarBackButtonHidden(true)
-        .safeAreaInset(edge: .bottom) {
+        .overlay(alignment: .bottom) {
             if viewModel.activeTemplate != nil {
                 bottomBar
             }
         }
+        .ignoresSafeArea(.container, edges: .all)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(.systemBackground).ignoresSafeArea())
     }
