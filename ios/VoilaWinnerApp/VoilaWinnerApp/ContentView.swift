@@ -287,7 +287,10 @@ struct ContentView: View {
             .tabItem { Label("Home", systemImage: "house.fill") }
         }
         .tint(Color(red: 0.26, green: 0.48, blue: 1.0))
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Color(.systemBackground), for: .tabBar)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .bottom)
         .fullScreenCover(isPresented: Binding(
             get: { viewModel.selectedTab == .active },
             set: { if !$0 && viewModel.selectedTab == .active { viewModel.cancelWorkout() } }
@@ -316,10 +319,14 @@ struct DashboardScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Existing workout templates")
+                Text("Home")
+                    .font(.largeTitle.bold())
+
+                HStack(alignment: .top) {
+                    Text("Existing workout
+templates")
                         .font(.title2.bold())
-                    Spacer()
+                    Spacer(minLength: 12)
                     Button {
                         showCreateTemplate = true
                     } label: {
@@ -357,10 +364,15 @@ struct DashboardScreen: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
             }
-            .padding()
+            .padding(.horizontal)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
         }
+        .scrollClipDisabled(false)
+        .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .navigationTitle("Home")
+        .navigationBarHidden(true)
+        .safeAreaPadding(.bottom, 0)
         .sheet(isPresented: $showCreateTemplate) {
             CreateEditTemplateScreen(viewModel: viewModel)
         }
