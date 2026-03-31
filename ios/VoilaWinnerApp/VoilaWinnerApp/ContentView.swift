@@ -313,6 +313,7 @@ struct ContentView: View {
             .tabItem { Label("Complete", systemImage: "checkmark.seal.fill") }
         }
         .tint(Color(red: 0.26, green: 0.48, blue: 1.0))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -390,6 +391,7 @@ struct DashboardScreen: View {
             }
             .padding()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("Home")
         .sheet(isPresented: $showTemplatePicker) {
             TemplateSelectionModal(viewModel: viewModel)
@@ -491,6 +493,7 @@ struct TemplateLibraryScreen: View {
                 .listStyle(.plain)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal)
         .navigationTitle("Library")
         .toolbar {
@@ -725,6 +728,7 @@ struct ActiveWorkoutScreen: View {
                     }
                     .padding()
                 }
+                .frame(maxHeight: .infinity)
 
                 bottomBar
             } else {
@@ -746,6 +750,7 @@ struct ActiveWorkoutScreen: View {
             viewModel.restTimerTick()
         }
         .navigationBarBackButtonHidden(true)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func topBar(templateName: String) -> some View {
@@ -879,6 +884,7 @@ struct WorkoutCompleteScreen: View {
                 ContentUnavailableView("No Summary Yet", systemImage: "checkmark.seal", description: Text("Finish an active workout to view your summary."))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("Complete")
     }
 
@@ -934,6 +940,7 @@ struct HistoryAnalyticsScreen: View {
             }
             .padding()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("History")
     }
 
