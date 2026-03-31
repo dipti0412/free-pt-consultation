@@ -432,12 +432,13 @@ struct TemplateLibraryScreen: View {
     @State private var showCreateTemplate = false
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
             Picker("Section", selection: $selection) {
                 Text("Templates").tag(0)
                 Text("History").tag(1)
             }
             .pickerStyle(.segmented)
+            .padding(.bottom, 12)
 
             if selection == 0 {
                 ScrollView {
@@ -479,18 +480,28 @@ struct TemplateLibraryScreen: View {
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity)
                 }
             } else {
-                List(viewModel.workoutHistory.prefix(20)) { workout in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(workout.startTime.formatted(date: .abbreviated, time: .shortened))
-                            .font(.headline)
-                        Text("Duration \(workout.durationMinutes) min • Calories \(workout.caloriesBurned)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(viewModel.workoutHistory.prefix(20)) { workout in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(workout.startTime.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.headline)
+                                Text("Duration \(workout.durationMinutes) min • Calories \(workout.caloriesBurned)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .background(Color(.secondarySystemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
-                .listStyle(.plain)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
