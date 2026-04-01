@@ -279,16 +279,15 @@ struct ContentView: View {
     @StateObject private var viewModel = WorkoutFlowViewModel()
 
     var body: some View {
-        TabView(selection: $viewModel.selectedTab) {
+        ZStack(alignment: .bottom) {
             NavigationStack {
                 DashboardScreen(viewModel: viewModel)
             }
-            .tag(RootTab.home)
-            .tabItem { Label("Home", systemImage: "house.fill") }
+            if viewModel.selectedTab == .home {
+                bottomDock
+            }
         }
         .tint(Color(red: 0.26, green: 0.48, blue: 1.0))
-        .toolbarBackground(.visible, for: .tabBar)
-        .toolbarBackground(Color(.systemBackground), for: .tabBar)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .all)
         .fullScreenCover(isPresented: Binding(
@@ -307,6 +306,25 @@ struct ContentView: View {
                 WorkoutCompleteScreen(viewModel: viewModel)
             }
         }
+    }
+
+    private var bottomDock: some View {
+        VStack(spacing: 0) {
+            Divider()
+            Button {
+                viewModel.selectedTab = .home
+            } label: {
+                Image(systemName: "house.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+            }
+            .buttonStyle(.plain)
+            .background(Color(.systemBackground))
+        }
+        .background(Color(.systemBackground))
+        .ignoresSafeArea(.container, edges: .bottom)
     }
 }
 
