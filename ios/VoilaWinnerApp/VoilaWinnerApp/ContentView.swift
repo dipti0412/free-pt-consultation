@@ -341,8 +341,7 @@ struct DashboardScreen: View {
                     .font(.largeTitle.bold())
 
                 HStack(alignment: .top) {
-                    Text("Existing workout
-templates")
+                    Text("Existing workout templates")
                         .font(.title2.bold())
                     Spacer(minLength: 12)
                     Button {
