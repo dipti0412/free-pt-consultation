@@ -391,7 +391,7 @@ templates")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationBarHidden(true)
         .ignoresSafeArea(.container, edges: .all)
-        .sheet(isPresented: $showCreateTemplate) {
+        .fullScreenCover(isPresented: $showCreateTemplate) {
             CreateEditTemplateScreen(viewModel: viewModel)
         }
     }
@@ -489,7 +489,7 @@ struct TemplateLibraryScreen: View {
                 }
             }
         }
-        .sheet(isPresented: $showCreateTemplate) {
+        .fullScreenCover(isPresented: $showCreateTemplate) {
             CreateEditTemplateScreen(viewModel: viewModel)
         }
     }
@@ -570,7 +570,7 @@ struct CreateEditTemplateScreen: View {
             .padding()
             .navigationTitle("New Template")
             .toolbar { EditButton() }
-            .sheet(isPresented: $showExerciseSearch) {
+            .fullScreenCover(isPresented: $showExerciseSearch) {
                 ExerciseSearchModal { exercise in
                     draftExercises.append(exercise)
                 }
@@ -712,7 +712,7 @@ struct ActiveWorkoutScreen: View {
                 ContentUnavailableView("No Active Workout", systemImage: "bolt.slash", description: Text("Start from Dashboard or Templates."))
             }
         }
-        .sheet(isPresented: $addExerciseSheet) {
+        .fullScreenCover(isPresented: $addExerciseSheet) {
             ExerciseSearchModal { exercise in
                 viewModel.addExercise(exercise)
             }
