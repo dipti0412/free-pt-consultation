@@ -655,54 +655,63 @@ struct ActiveWorkoutScreen: View {
                     VStack(spacing: 0) {
                         topBar(templateName: template.name)
 
-                        LazyVStack(spacing: 12) {
-                        ForEach($viewModel.activeExerciseProgress) { $exercise in
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(exercise.exercise.name)
-                                    .font(.title3.bold())
-                                Text("Last: \(exercise.exercise.lastPerformance)")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            ForEach($viewModel.activeExerciseProgress) { $exercise in
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text(exercise.exercise.name)
+                                        .font(.headline.bold())
+                                        .lineLimit(2)
+                                        .minimumScaleFactor(0.85)
+                                    Text("Last: \(exercise.exercise.lastPerformance)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
 
-                                ForEach($exercise.setRows) { $row in
-                                    HStack {
-                                        Text("Set \(row.number)")
-                                            .font(.subheadline.weight(.semibold))
-                                            .frame(width: 52, alignment: .leading)
+                                    VStack(spacing: 8) {
+                                        ForEach($exercise.setRows) { $row in
+                                            HStack(spacing: 6) {
+                                                Text("Set \(row.number)")
+                                                    .font(.caption.weight(.semibold))
+                                                    .frame(width: 44, alignment: .leading)
 
-                                        TextField("lbs", text: $row.weight)
-                                            .keyboardType(.decimalPad)
-                                            .textFieldStyle(.roundedBorder)
-                                            .frame(maxWidth: 90)
+                                                TextField("lbs", text: $row.weight)
+                                                    .keyboardType(.decimalPad)
+                                                    .textFieldStyle(.roundedBorder)
+                                                    .frame(minWidth: 40, maxWidth: .infinity)
 
-                                        TextField("reps", text: $row.reps)
-                                            .keyboardType(.numberPad)
-                                            .textFieldStyle(.roundedBorder)
-                                            .frame(maxWidth: 90)
+                                                TextField("reps", text: $row.reps)
+                                                    .keyboardType(.numberPad)
+                                                    .textFieldStyle(.roundedBorder)
+                                                    .frame(minWidth: 40, maxWidth: .infinity)
 
-                                        Button {
-                                            viewModel.completeSet(exerciseID: exercise.id, setID: row.id)
-                                        } label: {
-                                            Image(systemName: row.isCompleted ? "checkmark.circle.fill" : "circle")
-                                                .font(.title3)
+                                                Button {
+                                                    viewModel.completeSet(exerciseID: exercise.id, setID: row.id)
+                                                } label: {
+                                                    Image(systemName: row.isCompleted ? "checkmark.circle.fill" : "circle")
+                                                        .font(.body)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
                                         }
                                     }
-                                }
 
-                                Button("Add Set") {
-                                    viewModel.addSet(exerciseID: exercise.id)
-                                }
-                                .buttonStyle(.bordered)
+                                    Button("Add Set") {
+                                        viewModel.addSet(exerciseID: exercise.id)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
 
-                                DisclosureGroup("Notes") {
-                                    TextField("Add exercise notes...", text: $exercise.notes, axis: .vertical)
-                                        .textFieldStyle(.roundedBorder)
+                                    DisclosureGroup("Notes") {
+                                        TextField("Add exercise notes...", text: $exercise.notes, axis: .vertical)
+                                            .textFieldStyle(.roundedBorder)
+                                            .font(.caption)
+                                    }
+                                    .font(.caption)
                                 }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .background(Color(.secondarySystemBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
                             }
-                            .padding()
-                            .background(Color(.secondarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                        }
                         }
                         .padding()
                     }
